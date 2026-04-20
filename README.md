@@ -55,7 +55,10 @@ pip install -r requirements.txt
 https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates
 ```
 
-6. Find your numeric `chat.id` in the response and put it into `TELEGRAM_CHAT_ID`.
+6. Find your numeric `chat.id` in the response and put it into `TELEGRAM_CHAT_IDS`.
+7. For multiple users, use a comma-separated list like `891200356,123456789,987654321`.
+8. Friends can also press `Start` on the bot; the script auto-discovers active private chats from Telegram updates.
+9. If someone wants to unsubscribe, they can send `/stop` to the bot.
 
 ## Run
 
@@ -147,7 +150,9 @@ These are each 2 minutes earlier than your original target times to give the scr
 In GitHub, add these repository secrets:
 
 - `TELEGRAM_BOT_TOKEN`
-- `TELEGRAM_CHAT_ID`
+- `TELEGRAM_CHAT_IDS`
+
+`TELEGRAM_CHAT_ID` is still supported for backward compatibility, but `TELEGRAM_CHAT_IDS` is preferred for multiple subscribers.
 
 Then push the project to GitHub. You can also test it manually from the GitHub Actions tab using `Run workflow`.
 

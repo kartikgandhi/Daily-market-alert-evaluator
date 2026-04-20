@@ -375,26 +375,102 @@ def build_telegram_message(alerts: Iterable[dict[str, str | float]]) -> str:
     return "\n".join(lines)
 
 
-def send_telegram_message(alerts: Iterable[dict[str, str | float]]) -> None:
-    bot_token = require_env("TELEGRAM_BOT_TOKEN")
-    chat_id = require_env("TELEGRAM_CHAT_ID")
-    body = build_telegram_message(alerts)
+def parse_chat_ids(raw_value: str) -> list[str]:
+    return [item.strip() for item in raw_value.split(",") if item.strip()]
 
-    response = requests.post(
-        f"https://api.telegram.org/bot{bot_token}/sendMessage",
-        json={
-            "chat_id": chat_id,
-            "text": body,
-        },
+
+def get_configured_chat_ids() -> list[str]:
+    chat_ids: list[str] = []
+    raw_multi_chat_ids = os.getenv("TELEGRAM_CHAT_IDS", "")
+    raw_single_chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
+
+    if raw_multi_chat_ids:
+        chat_ids.extend(parse_chat_ids(raw_multi_chat_ids))
+    if raw_single_chat_id:
+        chat_ids.extend(parse_chat_ids(raw_single_chat_id))
+
+    return chat_ids
+
+
+def fetch_telegram_subscribers(bot_token: str) -> list[str]:
+    response = requests.get(
+        f"https://api.telegram.org/bot{bot_token}/getUpdates",
         timeout=30,
     )
     response.raise_for_status()
     payload = response.json()
     if not payload.get("ok"):
-        raise AlertError(f"Telegram send failed: {payload}")
+        raise AlertError(f"Telegram getUpdates failed: {payload}")
 
-    message_id = payload.get("result", {}).get("message_id", "unknown")
-    print(f"Sent Telegram market update: {message_id}", file=sys.stdout)
+    subscriber_state: dict[str, bool] = {}
+    for update in payload.get("result", []):
+        message = update.get("message") or update.get("edited_message")
+        if not message:
+            continue
+
+        chat = message.get("chat", {})
+        chat_id = chat.get("id")
+        if chat_id is None:
+            continue
+
+        chat_id_text = str(chat_id)
+        text = str(message.get("text", "")).strip().lower()
+        if text.startswith("/stop"):
+            subscriber_state[chat_id_text] = False
+        elif text.startswith("/start") or chat.get("type") == "private":
+            subscriber_state[chat_id_text] = True
+
+    return [chat_id for chat_id, is_active in subscriber_state.items() if is_active]
+
+
+def get_telegram_recipient_chat_ids(bot_token: str) -> list[str]:
+    chat_ids = get_configured_chat_ids()
+    chat_ids.extend(fetch_telegram_subscribers(bot_token))
+    deduped_chat_ids = list(dict.fromkeys(chat_ids))
+    if not deduped_chat_ids:
+        raise AlertError(
+            "No Telegram recipients found. Set TELEGRAM_CHAT_IDS or ask users to press Start on the bot."
+        )
+    return deduped_chat_ids
+
+
+def send_telegram_message(alerts: Iterable[dict[str, str | float]]) -> None:
+    bot_token = require_env("TELEGRAM_BOT_TOKEN")
+    chat_ids = get_telegram_recipient_chat_ids(bot_token)
+    body = build_telegram_message(alerts)
+
+    sent_count = 0
+    failed_chat_ids: list[str] = []
+    for chat_id in chat_ids:
+        response = requests.post(
+            f"https://api.telegram.org/bot{bot_token}/sendMessage",
+            json={
+                "chat_id": chat_id,
+                "text": body,
+            },
+            timeout=30,
+        )
+        try:
+            response.raise_for_status()
+            payload = response.json()
+        except requests.RequestException:
+            failed_chat_ids.append(chat_id)
+            continue
+
+        if payload.get("ok"):
+            sent_count += 1
+        else:
+            failed_chat_ids.append(chat_id)
+
+    if failed_chat_ids:
+        print(
+            "Warning: failed to send Telegram update to: " + ", ".join(failed_chat_ids),
+            file=sys.stderr,
+        )
+    if sent_count == 0:
+        raise AlertError("Telegram send failed for every configured recipient.")
+
+    print(f"Sent Telegram market update to {sent_count} recipient(s).", file=sys.stdout)
 
 
 def main() -> int:
