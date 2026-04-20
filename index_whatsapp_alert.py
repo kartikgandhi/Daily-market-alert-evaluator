@@ -23,6 +23,7 @@ NSE_HOLIDAY_MASTER_URL = "https://www.nseindia.com/api/holiday-master"
 NSE_BHAVCOPY_URL_TEMPLATE = "https://nsearchives.nseindia.com/products/content/sec_bhavdata_full_{date}.csv"
 INDIA_TZ = ZoneInfo("Asia/Kolkata")
 HOLIDAY_NOTICE_HOUR = 11
+WELCOME_MESSAGE = "Welcome to the stock market alerts for Mutual Funds"
 NSE_REQUEST_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -392,6 +393,23 @@ def get_configured_chat_ids() -> list[str]:
     return chat_ids
 
 
+def send_telegram_text(bot_token: str, chat_id: str, text: str) -> bool:
+    response = requests.post(
+        f"https://api.telegram.org/bot{bot_token}/sendMessage",
+        json={
+            "chat_id": chat_id,
+            "text": text,
+        },
+        timeout=30,
+    )
+    try:
+        response.raise_for_status()
+        payload = response.json()
+    except requests.RequestException:
+        return False
+    return bool(payload.get("ok"))
+
+
 def fetch_telegram_subscribers(bot_token: str) -> list[str]:
     response = requests.get(
         f"https://api.telegram.org/bot{bot_token}/getUpdates",
@@ -403,6 +421,7 @@ def fetch_telegram_subscribers(bot_token: str) -> list[str]:
         raise AlertError(f"Telegram getUpdates failed: {payload}")
 
     subscriber_state: dict[str, bool] = {}
+    welcomed_start_messages: set[tuple[str, int]] = set()
     for update in payload.get("result", []):
         message = update.get("message") or update.get("edited_message")
         if not message:
@@ -419,6 +438,11 @@ def fetch_telegram_subscribers(bot_token: str) -> list[str]:
             subscriber_state[chat_id_text] = False
         elif text.startswith("/start") or chat.get("type") == "private":
             subscriber_state[chat_id_text] = True
+            message_id = message.get("message_id")
+            welcome_key = (chat_id_text, int(message_id or 0))
+            if text.startswith("/start") and welcome_key not in welcomed_start_messages:
+                send_telegram_text(bot_token, chat_id_text, WELCOME_MESSAGE)
+                welcomed_start_messages.add(welcome_key)
 
     return [chat_id for chat_id, is_active in subscriber_state.items() if is_active]
 
@@ -442,22 +466,7 @@ def send_telegram_message(alerts: Iterable[dict[str, str | float]]) -> None:
     sent_count = 0
     failed_chat_ids: list[str] = []
     for chat_id in chat_ids:
-        response = requests.post(
-            f"https://api.telegram.org/bot{bot_token}/sendMessage",
-            json={
-                "chat_id": chat_id,
-                "text": body,
-            },
-            timeout=30,
-        )
-        try:
-            response.raise_for_status()
-            payload = response.json()
-        except requests.RequestException:
-            failed_chat_ids.append(chat_id)
-            continue
-
-        if payload.get("ok"):
+        if send_telegram_text(bot_token, chat_id, body):
             sent_count += 1
         else:
             failed_chat_ids.append(chat_id)
