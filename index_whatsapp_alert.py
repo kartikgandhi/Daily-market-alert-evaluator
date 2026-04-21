@@ -25,6 +25,7 @@ NSE_BHAVCOPY_URL_TEMPLATE = "https://nsearchives.nseindia.com/products/content/s
 INDIA_TZ = ZoneInfo("Asia/Kolkata")
 HOLIDAY_NOTICE_HOUR = 11
 WELCOME_MESSAGE = "Welcome to the stock market alerts for Mutual Funds"
+SUPABASE_SUBSCRIBERS_TABLE = "telegram_subscribers"
 NSE_REQUEST_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -394,6 +395,31 @@ def get_configured_chat_ids() -> list[str]:
     return chat_ids
 
 
+def has_supabase_config() -> bool:
+    return bool(os.getenv("SUPABASE_URL", "").strip()) and bool(
+        os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+    )
+
+
+def fetch_supabase_subscribers() -> list[str]:
+    supabase_url = require_env("SUPABASE_URL").rstrip("/")
+    service_role_key = require_env("SUPABASE_SERVICE_ROLE_KEY")
+    response = requests.get(
+        f"{supabase_url}/rest/v1/{SUPABASE_SUBSCRIBERS_TABLE}",
+        params={
+            "select": "chat_id",
+            "is_active": "eq.true",
+        },
+        headers={
+            "apikey": service_role_key,
+            "Authorization": f"Bearer {service_role_key}",
+        },
+        timeout=30,
+    )
+    response.raise_for_status()
+    return [str(item["chat_id"]) for item in response.json() if item.get("chat_id") is not None]
+
+
 def send_telegram_text(bot_token: str, chat_id: str, text: str) -> bool:
     response = requests.post(
         f"https://api.telegram.org/bot{bot_token}/sendMessage",
@@ -474,8 +500,6 @@ def fetch_telegram_subscribers(bot_token: str) -> list[str]:
             stored_subscribers.discard(chat_id_text)
         elif text.startswith("/start") or chat.get("type") == "private":
             stored_subscribers.add(chat_id_text)
-            if text.startswith("/start"):
-                send_telegram_text(bot_token, chat_id_text, WELCOME_MESSAGE)
 
     if max_update_id is not None:
         state["next_update_offset"] = max_update_id + 1
@@ -487,7 +511,10 @@ def fetch_telegram_subscribers(bot_token: str) -> list[str]:
 
 def get_telegram_recipient_chat_ids(bot_token: str) -> list[str]:
     chat_ids = get_configured_chat_ids()
-    chat_ids.extend(fetch_telegram_subscribers(bot_token))
+    if has_supabase_config():
+        chat_ids.extend(fetch_supabase_subscribers())
+    else:
+        chat_ids.extend(fetch_telegram_subscribers(bot_token))
     deduped_chat_ids = list(dict.fromkeys(chat_ids))
     if not deduped_chat_ids:
         raise AlertError(

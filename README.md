@@ -61,7 +61,52 @@ https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates
 9. New users who press `Start` receive the welcome message once: `Welcome to the stock market alerts for Mutual Funds`.
 10. If someone wants to unsubscribe, they can send `/stop` to the bot.
 
-For existing subscribers, the most reliable setup is to also add their chat IDs to the `TELEGRAM_CHAT_IDS` GitHub secret. New subscribers who press `Start` after this version is deployed are stored in the workflow state so the welcome message is not repeated every scheduled run.
+For existing subscribers, the most reliable setup is to also add their chat IDs to the `TELEGRAM_CHAT_IDS` GitHub secret. The scheduled alert job does not send welcome messages; welcome messages are handled by the Vercel webhook described below.
+
+## Vercel + Supabase instant onboarding
+
+Use Vercel and Supabase when you want instant `/start` and `/stop` handling.
+
+Vercel handles:
+
+- instant Telegram webhook replies
+- `/start` welcome message
+- `/stop` unsubscribe message
+
+Supabase stores:
+
+- Telegram chat IDs
+- username and name metadata
+- active/inactive subscription state
+
+Setup:
+
+1. Create a Supabase project.
+2. Run the SQL in `supabase/schema.sql`.
+3. Deploy this repo to Vercel.
+4. Add these Vercel environment variables:
+
+```text
+TELEGRAM_BOT_TOKEN
+TELEGRAM_WEBHOOK_SECRET
+SUPABASE_URL
+SUPABASE_SERVICE_ROLE_KEY
+```
+
+5. Register the Telegram webhook after Vercel deploys:
+
+```text
+https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook?url=https://<YOUR_VERCEL_DOMAIN>/api/telegram/webhook&secret_token=<TELEGRAM_WEBHOOK_SECRET>
+```
+
+6. Add these GitHub Actions secrets so scheduled alerts can read subscribers from Supabase:
+
+```text
+SUPABASE_URL
+SUPABASE_SERVICE_ROLE_KEY
+```
+
+Once Supabase secrets are present, the scheduled alert script reads active subscribers from Supabase. Without Supabase, it falls back to `TELEGRAM_CHAT_IDS` and Telegram update polling.
 
 ## Run
 
@@ -154,6 +199,8 @@ In GitHub, add these repository secrets:
 
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_CHAT_IDS`
+- `SUPABASE_URL` if using Supabase subscribers
+- `SUPABASE_SERVICE_ROLE_KEY` if using Supabase subscribers
 
 `TELEGRAM_CHAT_ID` is still supported for backward compatibility, but `TELEGRAM_CHAT_IDS` is preferred for multiple subscribers.
 
