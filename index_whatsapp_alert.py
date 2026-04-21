@@ -16,6 +16,7 @@ import io
 import requests
 
 
+TELEGRAM_STATE_FILE = ".telegram_state.json"
 NSE_ALL_INDICES_URL = "https://www.nseindia.com/api/allIndices"
 NSE_QUOTE_EQUITY_URL = "https://www.nseindia.com/api/quote-equity"
 NSE_HISTORICAL_INDICES_URL = "https://www.nseindia.com/api/historicalOR/indicesHistory"
@@ -410,9 +411,39 @@ def send_telegram_text(bot_token: str, chat_id: str, text: str) -> bool:
     return bool(payload.get("ok"))
 
 
+def load_telegram_state() -> dict[str, object]:
+    if not os.path.exists(TELEGRAM_STATE_FILE):
+        return {}
+    try:
+        with open(TELEGRAM_STATE_FILE, "r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def save_telegram_state(state: dict[str, object]) -> None:
+    with open(TELEGRAM_STATE_FILE, "w", encoding="utf-8") as handle:
+        json.dump(state, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+
+
 def fetch_telegram_subscribers(bot_token: str) -> list[str]:
+    state = load_telegram_state()
+    stored_subscribers = {
+        str(chat_id)
+        for chat_id in state.get("subscribers", [])
+        if str(chat_id).strip()
+    }
+
+    params: dict[str, int] = {}
+    raw_update_offset = state.get("next_update_offset")
+    update_offset = int(raw_update_offset) if raw_update_offset is not None else None
+    if update_offset is not None:
+        params["offset"] = update_offset
+
     response = requests.get(
         f"https://api.telegram.org/bot{bot_token}/getUpdates",
+        params=params,
         timeout=30,
     )
     response.raise_for_status()
@@ -420,9 +451,14 @@ def fetch_telegram_subscribers(bot_token: str) -> list[str]:
     if not payload.get("ok"):
         raise AlertError(f"Telegram getUpdates failed: {payload}")
 
-    subscriber_state: dict[str, bool] = {}
-    welcomed_start_messages: set[tuple[str, int]] = set()
-    for update in payload.get("result", []):
+    updates = payload.get("result", [])
+    max_update_id: int | None = None
+
+    for update in updates:
+        update_id = update.get("update_id")
+        if update_id is not None:
+            max_update_id = max(max_update_id or int(update_id), int(update_id))
+
         message = update.get("message") or update.get("edited_message")
         if not message:
             continue
@@ -435,16 +471,18 @@ def fetch_telegram_subscribers(bot_token: str) -> list[str]:
         chat_id_text = str(chat_id)
         text = str(message.get("text", "")).strip().lower()
         if text.startswith("/stop"):
-            subscriber_state[chat_id_text] = False
+            stored_subscribers.discard(chat_id_text)
         elif text.startswith("/start") or chat.get("type") == "private":
-            subscriber_state[chat_id_text] = True
-            message_id = message.get("message_id")
-            welcome_key = (chat_id_text, int(message_id or 0))
-            if text.startswith("/start") and welcome_key not in welcomed_start_messages:
+            stored_subscribers.add(chat_id_text)
+            if text.startswith("/start"):
                 send_telegram_text(bot_token, chat_id_text, WELCOME_MESSAGE)
-                welcomed_start_messages.add(welcome_key)
 
-    return [chat_id for chat_id, is_active in subscriber_state.items() if is_active]
+    if max_update_id is not None:
+        state["next_update_offset"] = max_update_id + 1
+    state["subscribers"] = sorted(stored_subscribers)
+    save_telegram_state(state)
+
+    return sorted(stored_subscribers)
 
 
 def get_telegram_recipient_chat_ids(bot_token: str) -> list[str]:

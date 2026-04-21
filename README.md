@@ -58,8 +58,10 @@ https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates
 6. Find your numeric `chat.id` in the response and put it into `TELEGRAM_CHAT_IDS`.
 7. For multiple users, use a comma-separated list like `891200356,123456789,987654321`.
 8. Friends can also press `Start` on the bot; the script auto-discovers active private chats from Telegram updates.
-9. New users who press `Start` receive: `Welcome to the stock market alerts for Mutual Funds`.
+9. New users who press `Start` receive the welcome message once: `Welcome to the stock market alerts for Mutual Funds`.
 10. If someone wants to unsubscribe, they can send `/stop` to the bot.
+
+For existing subscribers, the most reliable setup is to also add their chat IDs to the `TELEGRAM_CHAT_IDS` GitHub secret. New subscribers who press `Start` after this version is deployed are stored in the workflow state so the welcome message is not repeated every scheduled run.
 
 ## Run
 
