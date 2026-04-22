@@ -195,6 +195,8 @@ It runs Monday to Friday at these cloud schedules:
 
 These are each 2 minutes earlier than your original target times to give the script a little buffer.
 
+The script also has a safety cutoff: if a scheduled run starts after `3:45 PM IST`, it skips sending the market summary. This protects against delayed cloud runs sending stale market updates after the market-close window.
+
 In GitHub, add these repository secrets:
 
 - `TELEGRAM_BOT_TOKEN`

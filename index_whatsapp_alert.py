@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 import os
 import sys
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from dataclasses import dataclass
 from typing import Iterable
 from zoneinfo import ZoneInfo
@@ -24,6 +24,7 @@ NSE_HOLIDAY_MASTER_URL = "https://www.nseindia.com/api/holiday-master"
 NSE_BHAVCOPY_URL_TEMPLATE = "https://nsearchives.nseindia.com/products/content/sec_bhavdata_full_{date}.csv"
 INDIA_TZ = ZoneInfo("Asia/Kolkata")
 HOLIDAY_NOTICE_HOUR = 11
+MARKET_ALERT_CUTOFF_TIME = time(15, 45)
 WELCOME_MESSAGE = "Welcome to the stock market alerts for Mutual Funds"
 SUPABASE_SUBSCRIBERS_TABLE = "telegram_subscribers"
 NSE_REQUEST_HEADERS = {
@@ -238,7 +239,13 @@ def format_alert_line(alert: dict[str, str | float]) -> str:
 
 def collect_live_alerts() -> list[dict[str, str | float]]:
     session = build_nse_session()
-    today = datetime.now(INDIA_TZ).date()
+    current_time = datetime.now(INDIA_TZ)
+    today = current_time.date()
+
+    if current_time.time() > MARKET_ALERT_CUTOFF_TIME:
+        print("Skipping market update because the alert cutoff has passed.")
+        return []
+
     closed_reason = get_market_closed_reason(session, today)
     if closed_reason:
         if should_send_holiday_notice(today):
